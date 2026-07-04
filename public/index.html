@@ -64,7 +64,7 @@
     .features { margin: 18px 0 0; padding-left: 20px; }
     .features li { margin-bottom: 6px; font-size: 0.94rem; }
     .section-title { font-size: 0.8rem; letter-spacing: .06em; color: var(--muted); text-transform: uppercase; margin: 20px 0 8px; }
-    .error { color: #c0392b; background: #fdecea; border-radius: 10px; padding: 12px 14px; display: none; font-size: 0.9rem; }
+    .error { color: #c0392b; background: #fdecea; border-radius: 10px; padding: 12px 14px; display: none; font-size: 0.9rem; white-space: pre-wrap; }
     .spinner { display: none; text-align: center; color: var(--muted); padding: 8px; }
     .disclaimer { text-align: center; color: var(--muted); font-size: 0.78rem; margin-top: 8px; }
   </style>
@@ -131,6 +131,35 @@
       setFile(e.dataTransfer.files[0]);
     });
 
+    // 画像を最大 1024px に縮小して JPEG(base64) にする。
+    // 送信サイズを小さく保ち、サーバーレス関数のリクエスト上限を超えないようにする。
+    function fileToScaledJpeg(file, maxEdge = 1024, quality = 0.85) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+          let { width, height } = img;
+          const scale = Math.min(1, maxEdge / Math.max(width, height));
+          width = Math.max(1, Math.round(width * scale));
+          height = Math.max(1, Math.round(height * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          URL.revokeObjectURL(url);
+          try {
+            const dataUrl = canvas.toDataURL('image/jpeg', quality);
+            resolve(dataUrl.split(',')[1]);
+          } catch (e) {
+            reject(new Error('画像を変換できませんでした。'));
+          }
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした。')); };
+        img.src = url;
+      });
+    }
+
     submit.addEventListener('click', async () => {
       if (!selectedFile) return;
       submit.disabled = true;
@@ -138,13 +167,22 @@
       errorBox.style.display = 'none';
       result.style.display = 'none';
 
-      const form = new FormData();
-      form.append('image', selectedFile);
-
       try {
-        const res = await fetch('/api/estimate', { method: 'POST', body: form });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || '推定に失敗しました。');
+        const image = await fileToScaledJpeg(selectedFile);
+        const res = await fetch('/api/estimate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image, media_type: 'image/jpeg' }),
+        });
+
+        const text = await res.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (_) {
+          throw new Error(`サーバーから予期しない応答がありました（HTTP ${res.status}）。\nAPI が正しくデプロイされているか確認してください。`);
+        }
+        if (!res.ok) throw new Error(data.error || `推定に失敗しました（HTTP ${res.status}）。`);
         render(data);
       } catch (err) {
         errorBox.textContent = err.message;
@@ -167,8 +205,9 @@
         const row = document.createElement('div');
         row.className = 'bar-row';
         row.innerHTML = `
-          <div class="bar-label"><span>${escapeHtml(c.label)}</span><span>${score}</span></div>
+          <div class="bar-label"><span></span><span>${score}</span></div>
           <div class="bar-track"><div class="bar-fill" style="width:0%"></div></div>`;
+        row.querySelector('.bar-label span').textContent = c.label ?? '';
         cand.appendChild(row);
         requestAnimationFrame(() => {
           row.querySelector('.bar-fill').style.width = score + '%';
@@ -184,12 +223,6 @@
       });
 
       result.style.display = 'block';
-    }
-
-    function escapeHtml(s) {
-      const d = document.createElement('div');
-      d.textContent = s ?? '';
-      return d.innerHTML;
     }
   </script>
 </body>
