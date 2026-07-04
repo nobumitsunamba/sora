@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>赤ちゃん機嫌エスティメーター</title>
+  <style>
+    :root {
+      --bg: #fff7f2;
+      --card: #ffffff;
+      --ink: #4a3b35;
+      --muted: #9a8b83;
+      --accent: #f4a26b;
+      --accent-strong: #e8834a;
+      --track: #f0e6df;
+      --shadow: 0 8px 30px rgba(150, 110, 90, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.7;
+    }
+    .wrap { max-width: 640px; margin: 0 auto; padding: 32px 20px 64px; }
+    header { text-align: center; margin-bottom: 28px; }
+    h1 { font-size: 1.6rem; margin: 0 0 6px; }
+    .lead { color: var(--muted); font-size: 0.92rem; margin: 0; }
+    .card {
+      background: var(--card);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .drop {
+      border: 2px dashed #e6cdbc;
+      border-radius: 14px;
+      padding: 28px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .drop:hover, .drop.drag { border-color: var(--accent); background: #fff2ea; }
+    .drop p { margin: 6px 0; color: var(--muted); font-size: 0.9rem; }
+    .drop strong { color: var(--accent-strong); }
+    #preview { max-width: 100%; max-height: 320px; border-radius: 12px; margin-top: 16px; display: none; }
+    .btn {
+      display: block; width: 100%; margin-top: 16px;
+      background: var(--accent-strong); color: #fff; border: 0;
+      padding: 13px; border-radius: 12px; font-size: 1rem; font-weight: 600;
+      cursor: pointer; transition: opacity .2s;
+    }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .result { display: none; }
+    .mood-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+    .mood { font-size: 1.9rem; font-weight: 700; }
+    .conf { color: var(--muted); font-size: 0.95rem; }
+    .bar-row { margin: 14px 0; }
+    .bar-label { display: flex; justify-content: space-between; font-size: 0.9rem; margin-bottom: 4px; }
+    .bar-track { background: var(--track); border-radius: 999px; height: 10px; overflow: hidden; }
+    .bar-fill { background: var(--accent); height: 100%; border-radius: 999px; transition: width .5s; }
+    .features { margin: 18px 0 0; padding-left: 20px; }
+    .features li { margin-bottom: 6px; font-size: 0.94rem; }
+    .section-title { font-size: 0.8rem; letter-spacing: .06em; color: var(--muted); text-transform: uppercase; margin: 20px 0 8px; }
+    .error { color: #c0392b; background: #fdecea; border-radius: 10px; padding: 12px 14px; display: none; font-size: 0.9rem; }
+    .spinner { display: none; text-align: center; color: var(--muted); padding: 8px; }
+    .disclaimer { text-align: center; color: var(--muted); font-size: 0.78rem; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>👶 赤ちゃん機嫌エスティメーター</h1>
+      <p class="lead">顔写真をアップロードすると、表情から機嫌を推定します（遊び・参考目的）</p>
+    </header>
+
+    <div class="card">
+      <div class="drop" id="drop">
+        <p>📷 <strong>写真を選ぶ</strong> かここにドラッグ＆ドロップ</p>
+        <p>JPEG / PNG / GIF / WebP・8MB まで</p>
+        <input type="file" id="file" accept="image/*" hidden />
+        <img id="preview" alt="プレビュー" />
+      </div>
+      <button class="btn" id="submit" disabled>機嫌を推定する</button>
+      <div class="spinner" id="spinner">推定中… ⏳</div>
+      <div class="error" id="error"></div>
+    </div>
+
+    <div class="card result" id="result">
+      <div class="mood-head">
+        <span class="mood" id="mood"></span>
+        <span class="conf" id="conf"></span>
+      </div>
+      <div class="section-title">候補</div>
+      <div id="candidates"></div>
+      <div class="section-title">観察された特徴</div>
+      <ul class="features" id="features"></ul>
+      <p class="disclaimer">※ これは遊び・参考目的の推定です。体調や苦痛の医学的判断ではありません。</p>
+    </div>
+  </div>
+
+  <script>
+    const drop = document.getElementById('drop');
+    const fileInput = document.getElementById('file');
+    const preview = document.getElementById('preview');
+    const submit = document.getElementById('submit');
+    const spinner = document.getElementById('spinner');
+    const errorBox = document.getElementById('error');
+    const result = document.getElementById('result');
+
+    let selectedFile = null;
+
+    function setFile(file) {
+      if (!file || !file.type.startsWith('image/')) return;
+      selectedFile = file;
+      preview.src = URL.createObjectURL(file);
+      preview.style.display = 'block';
+      submit.disabled = false;
+      errorBox.style.display = 'none';
+    }
+
+    drop.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => setFile(e.target.files[0]));
+    drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('drag'); });
+    drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+    drop.addEventListener('drop', (e) => {
+      e.preventDefault();
+      drop.classList.remove('drag');
+      setFile(e.dataTransfer.files[0]);
+    });
+
+    submit.addEventListener('click', async () => {
+      if (!selectedFile) return;
+      submit.disabled = true;
+      spinner.style.display = 'block';
+      errorBox.style.display = 'none';
+      result.style.display = 'none';
+
+      const form = new FormData();
+      form.append('image', selectedFile);
+
+      try {
+        const res = await fetch('/api/estimate', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '推定に失敗しました。');
+        render(data);
+      } catch (err) {
+        errorBox.textContent = err.message;
+        errorBox.style.display = 'block';
+      } finally {
+        spinner.style.display = 'none';
+        submit.disabled = false;
+      }
+    });
+
+    function render(data) {
+      document.getElementById('mood').textContent = data.mood ?? '判定不能';
+      const conf = document.getElementById('conf');
+      conf.textContent = (typeof data.confidence === 'number') ? `確信度 ${data.confidence}%` : '';
+
+      const cand = document.getElementById('candidates');
+      cand.innerHTML = '';
+      (data.candidates || []).forEach((c) => {
+        const score = Math.max(0, Math.min(100, Number(c.score) || 0));
+        const row = document.createElement('div');
+        row.className = 'bar-row';
+        row.innerHTML = `
+          <div class="bar-label"><span>${escapeHtml(c.label)}</span><span>${score}</span></div>
+          <div class="bar-track"><div class="bar-fill" style="width:0%"></div></div>`;
+        cand.appendChild(row);
+        requestAnimationFrame(() => {
+          row.querySelector('.bar-fill').style.width = score + '%';
+        });
+      });
+
+      const feat = document.getElementById('features');
+      feat.innerHTML = '';
+      (data.observed_features || []).forEach((f) => {
+        const li = document.createElement('li');
+        li.textContent = f;
+        feat.appendChild(li);
+      });
+
+      result.style.display = 'block';
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s ?? '';
+      return d.innerHTML;
+    }
+  </script>
+</body>
+</html>
