@@ -1,0 +1,28 @@
+# ローカル開発・動作確認用(本番はContainer Apps + 基盤標準フローでデプロイ)
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: adminpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  app:
+    build: .
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_SSL: "false"
+      OPERATOR_NAME: ローカル開発者
+      MAX_BATCH_ROWS: "1000"
+      QUERY_TIMEOUT_MS: "30000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+
+volumes:
+  pgdata:
